@@ -1,0 +1,176 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres-signalink:
+    image: postgres:15-alpine
+    container_name: signalink_db
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - signalink-network
+
+  # Redis for Pub/Sub and Caching
+  redis-signalink:
+    image: redis:7-alpine
+    container_name: signalink_redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - signalink-network
+
+  # FastAPI REST API Service
+  api-signalink:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    container_name: signalink_api
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./services/api:/app
+    depends_on:
+      postgres-signalink:
+        condition: service_healthy
+      redis-signalink:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - signalink-network
+    restart: unless-stopped
+
+  # WebSocket Service (Phase 2)
+  websocket-signalink:
+    build:
+      context: ./services/websocket
+      dockerfile: Dockerfile
+    container_name: signalink_websocket
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - DATABASE_URL=${DATABASE_URL}
+    ports:
+      - "${WS_PORT:-8001}:8001"
+    volumes:
+      - ./services/websocket:/app
+    depends_on:
+      - redis-signalink
+      - postgres-signalink
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    networks:
+      - signalink-network
+    restart: unless-stopped
+    profiles:
+      - phase2
+
+  # Analytics Service (Phase 4)
+  analytics-signalink:
+    build:
+      context: ./services/analytics
+      dockerfile: Dockerfile
+    container_name: signalink_analytics
+    env_file:
+      - .env
+    volumes:
+      - ./services/analytics:/app
+    depends_on:
+      - postgres-signalink
+    networks:
+      - signalink-network
+    restart: unless-stopped
+    profiles:
+      - phase4
+
+  # Notification Worker (Phase 5)
+  notifications-signalink:
+    build:
+      context: ./services/notifications
+      dockerfile: Dockerfile
+    container_name: signalink_notifications
+    env_file:
+      - .env
+    volumes:
+      - ./services/notifications:/app
+    depends_on:
+      - redis-signalink
+    networks:
+      - signalink-network
+    restart: unless-stopped
+    profiles:
+      - phase5
+
+  # Prometheus (Monitoring)
+  prometheus-signalink:
+    image: prom/prometheus:latest
+    container_name: signalink_prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - signalink-network
+    profiles:
+      - monitoring
+
+  # Grafana (Visualization)
+  grafana-signalink:
+    image: grafana/grafana:latest
+    container_name: signalink_grafana
+    env_file:
+      - .env
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning
+    depends_on:
+      - prometheus-signalink
+    networks:
+      - signalink-network
+    profiles:
+      - monitoring
+
+networks:
+  signalink-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:

@@ -1,0 +1,50 @@
+# Prometheus Configuration for Signalink
+# Scrape metrics from all services
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'signalink-monitor'
+    environment: 'development'
+
+# Alertmanager configuration (optional - for Phase 7)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # API Service metrics
+  - job_name: 'signalink-api'
+    static_configs:
+      - targets: ['api-signalink:8000']
+    metrics_path: '/metrics'
+
+  # WebSocket Service metrics (Phase 2)
+  - job_name: 'signalink-websocket'
+    static_configs:
+      - targets: ['websocket-signalink:8001']
+    metrics_path: '/metrics'
+
+  # Analytics Service metrics (Phase 4)
+  - job_name: 'signalink-analytics'
+    static_configs:
+      - targets: ['analytics-signalink:8002']
+    metrics_path: '/metrics'
+
+  # PostgreSQL metrics (using postgres_exporter)
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']
+
+  # Redis metrics (using redis_exporter)
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['redis-exporter:9121']
