@@ -98,15 +98,19 @@ Edit `.env` with your configuration. For local development, the defaults should 
 ### 3. Start Services with Docker Compose
 
 ```bash
-# Start Phase 1 & 2 services (API + WebSocket + PostgreSQL + Redis)
+# Start Phase 1 & 2 & 3 services (API + WebSocket + PostgreSQL + Redis + Kafka + Zookeeper)
+docker-compose --profile phase2 --profile phase3 up -d
+
+# OR start only Phase 1 & 2 services (without Kafka)
 docker-compose --profile phase2 up -d
 
-# OR start only Phase 1 services
+# OR start only Phase 1 services (API only)
 docker-compose up -d
 
 # View logs
 docker-compose logs -f api-signalink
 docker-compose logs -f websocket-signalink
+docker-compose logs -f kafka-signalink
 
 # Stop services
 docker-compose down
@@ -122,13 +126,15 @@ docker-compose down
 
 ---
 
-## 📋 Current Status: Phase 2 ✅
+## 📋 Current Status: Phase 3 ✅
 
 **Phase 1: Foundation & REST API** - **COMPLETED**
 **Phase 2: WebSocket Real-Time Messaging** - **COMPLETED**
+**Phase 3: Kafka Event Streaming** - **COMPLETED**
 
 ### What's Implemented
 
+#### Phase 1: REST API & Database
 - ✅ Project structure and Docker setup
 - ✅ FastAPI REST API service
 - ✅ PostgreSQL database schema with migrations
@@ -137,6 +143,25 @@ docker-compose down
 - ✅ Channel CRUD operations
 - ✅ Message persistence endpoints
 - ✅ Role-based access control
+
+#### Phase 2: Real-Time Communication
+- ✅ FastAPI WebSocket service
+- ✅ Redis pub/sub for message broadcasting
+- ✅ Real-time message delivery
+- ✅ User presence tracking (online/offline/away)
+- ✅ Typing indicators
+- ✅ Multi-device support per user
+- ✅ Connection health monitoring (ping/pong)
+
+#### Phase 3: Event Streaming
+- ✅ Kafka 7.5.0 + Zookeeper infrastructure
+- ✅ 4 Kafka topics (messages, notifications, analytics, presence)
+- ✅ Async Kafka producer integration
+- ✅ Multi-topic Kafka consumer
+- ✅ Event-driven architecture with Pydantic schemas
+- ✅ 6 event handlers for message operations
+- ✅ FastAPI lifecycle management for Kafka
+- ✅ Comprehensive integration test suites
 
 ### Available Endpoints
 
@@ -230,7 +255,8 @@ curl -X POST http://localhost:8000/api/v1/messages/ \
 signalink/
 ├── services/
 │   ├── api/                    # REST API service (Phase 1) ✅
-│   ├── websocket/              # WebSocket service (Phase 2) ⬜
+│   │   └── app/kafka/          # Kafka integration (Phase 3) ✅
+│   ├── websocket/              # WebSocket service (Phase 2) ✅
 │   ├── analytics/              # Analytics microservice (Phase 4) ⬜
 │   └── notifications/          # Notification worker (Phase 5) ⬜
 ├── database/
@@ -238,7 +264,7 @@ signalink/
 │   └── schema.sql              # Database schema ✅
 ├── tests/
 │   ├── unit/
-│   ├── integration/
+│   ├── integration/            # Phase 1, 2, 3 tests ✅
 │   └── load/
 ├── infrastructure/
 │   └── docker/
@@ -262,14 +288,17 @@ signalink/
 
 ### ✅ Phase 1: Foundation & REST API (COMPLETED)
 **Skills**: Backend engineering, API design, JWT auth, PostgreSQL
+**Completed**: December 5, 2025
 
-### ⬜ Phase 2: WebSocket Real-Time Messaging (NEXT)
+### ✅ Phase 2: WebSocket Real-Time Messaging (COMPLETED)
 **Skills**: Async programming, WebSockets, Redis pub/sub, connection management
+**Completed**: December 7, 2025
 
-### ⬜ Phase 3: Kafka Event Streaming
-**Skills**: Event-driven architecture, message brokers, stream processing
+### ✅ Phase 3: Kafka Event Streaming (COMPLETED)
+**Skills**: Event-driven architecture, message brokers, stream processing, async consumers
+**Completed**: December 13, 2025
 
-### ⬜ Phase 4: Analytics Microservice
+### ⬜ Phase 4: Analytics Microservice (NEXT)
 **Skills**: Stream processing, metrics aggregation, time-series data
 
 ### ⬜ Phase 5: Notification Worker
@@ -286,17 +315,22 @@ signalink/
 ## 🔧 Development Commands
 
 ```bash
-# Start all Phase 1 services
-docker-compose up -d
+# Start all Phase 1, 2, & 3 services (Full stack)
+docker-compose --profile phase2 --profile phase3 up -d
 
-# Start with Phase 2 services (WebSocket)
+# Start only Phase 1 & 2 services (without Kafka)
 docker-compose --profile phase2 up -d
 
+# Start only Phase 1 services (API only)
+docker-compose up -d
+
 # View logs
-docker-compose logs -f api
+docker-compose logs -f api-signalink
+docker-compose logs -f websocket-signalink
+docker-compose logs -f kafka-signalink
 
 # Rebuild services after code changes
-docker-compose up -d --build api
+docker-compose up -d --build api-signalink
 
 # Stop all services
 docker-compose down
@@ -309,6 +343,12 @@ docker exec -it signalink_db psql -U signalink -d signalink
 
 # Access Redis CLI
 docker exec -it signalink_redis redis-cli
+
+# Check Kafka topics
+docker exec signalink_kafka kafka-topics --bootstrap-server localhost:9092 --list
+
+# Check Kafka consumer groups
+docker exec signalink_kafka kafka-consumer-groups --bootstrap-server localhost:9092 --group signalink-consumers --describe
 ```
 
 ---
@@ -390,14 +430,14 @@ docker exec -it signalink_redis redis-cli
 
 ## 🐛 Known Issues & Limitations
 
-### Current Limitations (Phase 1)
+### Current Limitations (After Phase 3)
 
-- ❌ No real-time message delivery (Phase 2)
-- ❌ No message persistence to Kafka (Phase 3)
-- ❌ No analytics or metrics (Phase 4)
-- ❌ No push notifications (Phase 5)
-- ❌ Local deployment only (Phase 6)
-- ❌ Limited observability (Phase 7)
+- ✅ Real-time message delivery implemented (Phase 2)
+- ✅ Event streaming with Kafka implemented (Phase 3)
+- ❌ No analytics dashboard or metrics visualization (Phase 4)
+- ❌ No push notifications to mobile devices (Phase 5)
+- ❌ Local deployment only, not production-ready (Phase 6)
+- ❌ Limited observability and monitoring (Phase 7)
 
 ### Future Improvements
 
