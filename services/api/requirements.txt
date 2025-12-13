@@ -25,7 +25,8 @@ email-validator==2.1.0
 redis==5.0.1
 
 # Kafka (for Phase 3)
-aiokafka==0.8.1
+aiokafka==0.10.0
+kafka-python==2.0.2
 
 # Monitoring
 prometheus-client==0.19.0

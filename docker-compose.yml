@@ -91,6 +91,47 @@ services:
     profiles:
       - phase2
 
+  # Zookeeper for Kafka (Phase 3)
+  zookeeper-signalink:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: signalink_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - signalink-network
+    profiles:
+      - phase3
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+
+  # Kafka Broker (Phase 3)
+  kafka-signalink:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: signalink_kafka
+    depends_on:
+      - zookeeper-signalink
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-signalink:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-signalink:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - signalink-network
+    profiles:
+      - phase3
+
   # Analytics Service (Phase 4)
   analytics-signalink:
     build:
@@ -172,5 +213,8 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  zookeeper_data:
+  zookeeper_logs:
+  kafka_data:
   prometheus_data:
   grafana_data:
