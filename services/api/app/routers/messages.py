@@ -7,12 +7,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from typing import List
 from uuid import UUID
+import logging
 
 from ..database import get_db
 from ..models import User, Message, Channel, ChannelMember
 from ..schemas import MessageCreate, MessageResponse, MessageUpdate
 from ..auth import get_current_user
+from ..kafka import kafka_producer
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/messages", tags=["messages"])
 
 
@@ -64,7 +67,24 @@ async def send_message(
     db.commit()
     db.refresh(new_message)
 
-    # TODO Phase 3: Publish message to Kafka
+    # Publish message.created event to Kafka
+    try:
+        await kafka_producer.publish_message_event(
+            event_type="message.created",
+            message_data={
+                "id": str(new_message.id),
+                "channel_id": str(new_message.channel_id),
+                "user_id": str(new_message.user_id),
+                "content": new_message.content,
+                "message_type": new_message.message_type,
+                "metadata": new_message.metadata if isinstance(new_message.metadata, dict) or new_message.metadata is None else {},
+                "created_at": new_message.created_at.isoformat(),
+            }
+        )
+        logger.info(f"Published message.created event for message {new_message.id}")
+    except Exception as e:
+        logger.error(f"Failed to publish message event to Kafka: {e}")
+
     # TODO Phase 2: Broadcast message via Redis pub/sub for real-time delivery
 
     return new_message
@@ -210,8 +230,26 @@ async def update_message(
     db.commit()
     db.refresh(message)
 
+    # Publish message.edited event to Kafka
+    try:
+        await kafka_producer.publish_message_event(
+            event_type="message.edited",
+            message_data={
+                "id": str(message.id),
+                "channel_id": str(message.channel_id),
+                "user_id": str(message.user_id),
+                "content": message.content,
+                "message_type": message.message_type,
+                "metadata": message.metadata if isinstance(message.metadata, dict) or message.metadata is None else {},
+                "is_edited": message.is_edited,
+                "updated_at": message.updated_at.isoformat() if message.updated_at else None,
+            }
+        )
+        logger.info(f"Published message.edited event for message {message.id}")
+    except Exception as e:
+        logger.error(f"Failed to publish message update event to Kafka: {e}")
+
     # TODO Phase 2: Broadcast message update via WebSocket
-    # TODO Phase 3: Publish update event to Kafka
 
     return message
 
@@ -258,7 +296,22 @@ async def delete_message(
 
     db.commit()
 
+    # Publish message.deleted event to Kafka
+    try:
+        await kafka_producer.publish_message_event(
+            event_type="message.deleted",
+            message_data={
+                "id": str(message.id),
+                "channel_id": str(message.channel_id),
+                "user_id": str(message.user_id),
+                "is_deleted": message.is_deleted,
+                "deleted_at": message.updated_at.isoformat() if message.updated_at else None,
+            }
+        )
+        logger.info(f"Published message.deleted event for message {message.id}")
+    except Exception as e:
+        logger.error(f"Failed to publish message deletion event to Kafka: {e}")
+
     # TODO Phase 2: Broadcast message deletion via WebSocket
-    # TODO Phase 3: Publish deletion event to Kafka
 
     return None

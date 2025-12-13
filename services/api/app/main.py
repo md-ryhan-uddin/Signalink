@@ -2,6 +2,7 @@
 Signalink API - Main FastAPI Application
 Real-time distributed messaging system
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,6 +10,8 @@ import logging
 
 from .config import settings
 from .routers import users, channels, messages
+from .kafka import kafka_producer, kafka_consumer
+from .kafka.handlers import EVENT_HANDLERS
 
 # Configure logging
 logging.basicConfig(
@@ -17,6 +20,58 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# Lifespan context manager for startup/shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Manage application lifecycle - startup and shutdown events
+    """
+    # Startup
+    logger.info("Starting Signalink API...")
+
+    # Start Kafka producer (non-fatal on failure)
+    try:
+        await kafka_producer.start()
+        logger.info("Kafka producer initialized successfully")
+    except Exception as e:
+        logger.warning(f"Kafka producer failed to start: {e}. API will run without Kafka.")
+
+    # Start Kafka consumer and register event handlers (non-fatal on failure)
+    try:
+        for event_type, handler in EVENT_HANDLERS.items():
+            kafka_consumer.register_handler(event_type, handler)
+
+        await kafka_consumer.start()
+        logger.info("Kafka consumer initialized successfully")
+
+        # Start consuming messages in background
+        import asyncio
+        consumer_task = asyncio.create_task(kafka_consumer.start_consuming())
+        logger.info("Kafka consumer tasks started")
+    except Exception as e:
+        logger.warning(f"Kafka consumer failed to start: {e}. API will run without Kafka.")
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down Signalink API...")
+
+    # Gracefully stop Kafka consumer
+    try:
+        await kafka_consumer.stop()
+        logger.info("Kafka consumer stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Kafka consumer: {e}")
+
+    # Gracefully stop Kafka producer
+    try:
+        await kafka_producer.stop()
+        logger.info("Kafka producer stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Kafka producer: {e}")
+
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.app_name,
@@ -24,6 +79,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Configure CORS
