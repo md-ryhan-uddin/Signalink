@@ -36,11 +36,13 @@ class Settings(BaseSettings):
     redis_max_connections: int = 10
 
     # Kafka Configuration (Phase 3)
-    kafka_bootstrap_servers: str = "localhost:9092"
-    kafka_topic_messages: str = "signalink-messages"
-    kafka_topic_notifications: str = "signalink-notifications"
-    kafka_topic_analytics: str = "signalink-analytics"
-    kafka_consumer_group: str = "signalink-consumers"
+    KAFKA_ENABLED: bool = True
+    KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9093"
+    KAFKA_TOPIC_MESSAGES: str = "signalink.messages"
+    KAFKA_TOPIC_NOTIFICATIONS: str = "signalink.notifications"
+    KAFKA_TOPIC_ANALYTICS: str = "signalink.analytics"
+    KAFKA_TOPIC_PRESENCE: str = "signalink.presence"
+    KAFKA_CONSUMER_GROUP: str = "signalink-consumers"
 
     # CORS Configuration
     cors_origins: str = '["http://localhost:3000","http://localhost:8000"]'
