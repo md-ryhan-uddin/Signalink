@@ -140,10 +140,23 @@ services:
     container_name: signalink_analytics
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - KAFKA_ENABLED=${KAFKA_ENABLED}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
+      - KAFKA_TOPIC_MESSAGES=${KAFKA_TOPIC_MESSAGES}
+      - KAFKA_TOPIC_ANALYTICS=${KAFKA_TOPIC_ANALYTICS}
+      - KAFKA_CONSUMER_GROUP=analytics-consumers
+    ports:
+      - "8002:8002"
     volumes:
       - ./services/analytics:/app
     depends_on:
-      - postgres-signalink
+      postgres-signalink:
+        condition: service_healthy
+      kafka-signalink:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
     networks:
       - signalink-network
     restart: unless-stopped
