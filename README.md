@@ -98,7 +98,10 @@ Edit `.env` with your configuration. For local development, the defaults should 
 ### 3. Start Services with Docker Compose
 
 ```bash
-# Start Phase 1 & 2 & 3 services (API + WebSocket + PostgreSQL + Redis + Kafka + Zookeeper)
+# Start all services (Phase 1 + 2 + 3 + 4: Full stack with Analytics)
+docker-compose --profile phase2 --profile phase3 --profile phase4 up -d
+
+# OR start Phase 1 & 2 & 3 services (without Analytics)
 docker-compose --profile phase2 --profile phase3 up -d
 
 # OR start only Phase 1 & 2 services (without Kafka)
@@ -111,6 +114,7 @@ docker-compose up -d
 docker-compose logs -f api-signalink
 docker-compose logs -f websocket-signalink
 docker-compose logs -f kafka-signalink
+docker-compose logs -f analytics-signalink
 
 # Stop services
 docker-compose down
@@ -123,14 +127,17 @@ docker-compose down
 - **REST API Health Check**: http://localhost:8000/health
 - **WebSocket Service**: ws://localhost:8001/ws?token=YOUR_JWT_TOKEN
 - **WebSocket Stats**: http://localhost:8001/stats
+- **Analytics API Docs (Swagger)**: http://localhost:8002/docs
+- **Analytics Health Check**: http://localhost:8002/health
 
 ---
 
-## 📋 Current Status: Phase 3 ✅
+## 📋 Current Status: Phase 4 ✅
 
 **Phase 1: Foundation & REST API** - **COMPLETED**
 **Phase 2: WebSocket Real-Time Messaging** - **COMPLETED**
 **Phase 3: Kafka Event Streaming** - **COMPLETED**
+**Phase 4: Analytics Microservice** - **COMPLETED**
 
 ### What's Implemented
 
@@ -163,6 +170,17 @@ docker-compose down
 - ✅ FastAPI lifecycle management for Kafka
 - ✅ Comprehensive integration test suites
 
+#### Phase 4: Analytics Microservice
+- ✅ Dedicated analytics FastAPI microservice (port 8002)
+- ✅ Real-time Kafka event consumption from message topic
+- ✅ Time-windowed metrics aggregation (60-second windows)
+- ✅ 3 PostgreSQL metrics tables (MessageMetrics, ChannelMetrics, UserMetrics)
+- ✅ 8 metrics API endpoints for data retrieval
+- ✅ System statistics and time-series data
+- ✅ Top active channels and users tracking
+- ✅ Docker integration with phase4 profile
+- ✅ 15/15 infrastructure tests passing (100%)
+
 ### Available Endpoints
 
 #### Authentication & Users
@@ -189,6 +207,16 @@ docker-compose down
 - `GET /api/v1/messages/{message_id}` - Get specific message
 - `PUT /api/v1/messages/{message_id}` - Update message
 - `DELETE /api/v1/messages/{message_id}` - Delete message
+
+#### Analytics Metrics
+- `GET /metrics/messages` - Get message metrics time-series
+- `GET /metrics/channels/{channel_id}` - Get channel-specific metrics
+- `GET /metrics/users/{user_id}` - Get user-specific metrics
+- `GET /metrics/channels/top/active` - Get top active channels
+- `GET /metrics/users/top/active` - Get top active users
+- `GET /metrics/system/stats` - Get system-wide statistics
+- `GET /metrics/system/timeseries` - Get time-series analytics data
+- `GET /health` - Analytics service health check
 
 ---
 
@@ -257,7 +285,7 @@ signalink/
 │   ├── api/                    # REST API service (Phase 1) ✅
 │   │   └── app/kafka/          # Kafka integration (Phase 3) ✅
 │   ├── websocket/              # WebSocket service (Phase 2) ✅
-│   ├── analytics/              # Analytics microservice (Phase 4) ⬜
+│   ├── analytics/              # Analytics microservice (Phase 4) ✅
 │   └── notifications/          # Notification worker (Phase 5) ⬜
 ├── database/
 │   ├── migrations/
@@ -298,10 +326,11 @@ signalink/
 **Skills**: Event-driven architecture, message brokers, stream processing, async consumers
 **Completed**: December 13, 2025
 
-### ⬜ Phase 4: Analytics Microservice (NEXT)
-**Skills**: Stream processing, metrics aggregation, time-series data
+### ✅ Phase 4: Analytics Microservice (COMPLETED)
+**Skills**: Stream processing, metrics aggregation, time-series data, Kafka consumers
+**Completed**: December 14, 2025
 
-### ⬜ Phase 5: Notification Worker
+### ⬜ Phase 5: Notification Worker (NEXT)
 **Skills**: Background workers, async task processing, Firebase integration
 
 ### ⬜ Phase 6: Cloud Deployment
@@ -315,7 +344,10 @@ signalink/
 ## 🔧 Development Commands
 
 ```bash
-# Start all Phase 1, 2, & 3 services (Full stack)
+# Start all services (Phase 1 + 2 + 3 + 4: Full stack with Analytics)
+docker-compose --profile phase2 --profile phase3 --profile phase4 up -d
+
+# Start Phase 1 & 2 & 3 services (without Analytics)
 docker-compose --profile phase2 --profile phase3 up -d
 
 # Start only Phase 1 & 2 services (without Kafka)
@@ -328,9 +360,11 @@ docker-compose up -d
 docker-compose logs -f api-signalink
 docker-compose logs -f websocket-signalink
 docker-compose logs -f kafka-signalink
+docker-compose logs -f analytics-signalink
 
 # Rebuild services after code changes
 docker-compose up -d --build api-signalink
+docker-compose up -d --build analytics-signalink
 
 # Stop all services
 docker-compose down
@@ -430,11 +464,11 @@ docker exec signalink_kafka kafka-consumer-groups --bootstrap-server localhost:9
 
 ## 🐛 Known Issues & Limitations
 
-### Current Limitations (After Phase 3)
+### Current Limitations (After Phase 4)
 
 - ✅ Real-time message delivery implemented (Phase 2)
 - ✅ Event streaming with Kafka implemented (Phase 3)
-- ❌ No analytics dashboard or metrics visualization (Phase 4)
+- ✅ Analytics microservice with metrics aggregation (Phase 4)
 - ❌ No push notifications to mobile devices (Phase 5)
 - ❌ Local deployment only, not production-ready (Phase 6)
 - ❌ Limited observability and monitoring (Phase 7)
