@@ -3,8 +3,8 @@ Channel management endpoints
 Create, read, update, delete channels and manage memberships
 """
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
 from typing import List
 from uuid import UUID
 
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/channels", tags=["channels"])
 async def create_channel(
     channel_data: ChannelCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new channel
@@ -33,7 +33,8 @@ async def create_channel(
     - **is_private**: Whether channel is private (default: false)
     """
     # Check if channel name already exists
-    existing_channel = db.query(Channel).filter(Channel.name == channel_data.name).first()
+    result = await db.execute(select(Channel).filter(Channel.name == channel_data.name))
+    existing_channel = result.scalar_one_or_none()
     if existing_channel:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -49,8 +50,8 @@ async def create_channel(
     )
 
     db.add(new_channel)
-    db.commit()
-    db.refresh(new_channel)
+    await db.commit()
+    await db.refresh(new_channel)
 
     return new_channel
 
@@ -60,7 +61,7 @@ async def list_channels(
     skip: int = 0,
     limit: int = 50,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     List all channels accessible to the current user
@@ -69,19 +70,25 @@ async def list_channels(
     - **limit**: Maximum number of records to return
     """
     # Get channels where user is a member or public channels
-    channels = db.query(Channel).join(
+    stmt = select(Channel).join(
         ChannelMember,
         (Channel.id == ChannelMember.channel_id) & (ChannelMember.user_id == current_user.id),
         isouter=True
     ).filter(
         (Channel.is_private == False) | (ChannelMember.user_id == current_user.id)
-    ).distinct().offset(skip).limit(limit).all()
+    ).distinct().offset(skip).limit(limit)
+
+    result = await db.execute(stmt)
+    channels = result.scalars().all()
 
     # Add member and message counts
     for channel in channels:
-        channel.member_count = db.query(func.count(ChannelMember.id)).filter(
-            ChannelMember.channel_id == channel.id
-        ).scalar()
+        count_result = await db.execute(
+            select(func.count(ChannelMember.id)).filter(
+                ChannelMember.channel_id == channel.id
+            )
+        )
+        channel.member_count = count_result.scalar()
 
         # Message count would require Message model - placeholder for now
         channel.message_count = 0
@@ -93,12 +100,13 @@ async def list_channels(
 async def get_channel(
     channel_id: UUID,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get channel details by ID
     """
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    result = await db.execute(select(Channel).filter(Channel.id == channel_id))
+    channel = result.scalar_one_or_none()
 
     if not channel:
         raise HTTPException(
@@ -108,10 +116,13 @@ async def get_channel(
 
     # Check if user has access to private channel
     if channel.is_private:
-        membership = db.query(ChannelMember).filter(
-            ChannelMember.channel_id == channel_id,
-            ChannelMember.user_id == current_user.id
-        ).first()
+        result = await db.execute(
+            select(ChannelMember).filter(
+                ChannelMember.channel_id == channel_id,
+                ChannelMember.user_id == current_user.id
+            )
+        )
+        membership = result.scalar_one_or_none()
 
         if not membership:
             raise HTTPException(
@@ -120,9 +131,12 @@ async def get_channel(
             )
 
     # Add counts
-    channel.member_count = db.query(func.count(ChannelMember.id)).filter(
-        ChannelMember.channel_id == channel.id
-    ).scalar()
+    count_result = await db.execute(
+        select(func.count(ChannelMember.id)).filter(
+            ChannelMember.channel_id == channel.id
+        )
+    )
+    channel.member_count = count_result.scalar()
     channel.message_count = 0
 
     return channel
@@ -133,7 +147,7 @@ async def update_channel(
     channel_id: UUID,
     channel_update: ChannelUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Update channel details (owner/admin only)
@@ -142,7 +156,8 @@ async def update_channel(
     - **description**: Update description
     - **is_private**: Change privacy setting
     """
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    result = await db.execute(select(Channel).filter(Channel.id == channel_id))
+    channel = result.scalar_one_or_none()
 
     if not channel:
         raise HTTPException(
@@ -151,11 +166,14 @@ async def update_channel(
         )
 
     # Check if user is owner or admin
-    membership = db.query(ChannelMember).filter(
-        ChannelMember.channel_id == channel_id,
-        ChannelMember.user_id == current_user.id,
-        ChannelMember.role.in_(['owner', 'admin'])
-    ).first()
+    result = await db.execute(
+        select(ChannelMember).filter(
+            ChannelMember.channel_id == channel_id,
+            ChannelMember.user_id == current_user.id,
+            ChannelMember.role.in_(['owner', 'admin'])
+        )
+    )
+    membership = result.scalar_one_or_none()
 
     if not membership:
         raise HTTPException(
@@ -166,10 +184,13 @@ async def update_channel(
     # Update fields
     if channel_update.name is not None:
         # Check if new name is unique
-        existing = db.query(Channel).filter(
-            Channel.name == channel_update.name,
-            Channel.id != channel_id
-        ).first()
+        result = await db.execute(
+            select(Channel).filter(
+                Channel.name == channel_update.name,
+                Channel.id != channel_id
+            )
+        )
+        existing = result.scalar_one_or_none()
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -183,8 +204,8 @@ async def update_channel(
     if channel_update.is_private is not None:
         channel.is_private = channel_update.is_private
 
-    db.commit()
-    db.refresh(channel)
+    await db.commit()
+    await db.refresh(channel)
 
     return channel
 
@@ -193,12 +214,13 @@ async def update_channel(
 async def delete_channel(
     channel_id: UUID,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a channel (owner only)
     """
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    result = await db.execute(select(Channel).filter(Channel.id == channel_id))
+    channel = result.scalar_one_or_none()
 
     if not channel:
         raise HTTPException(
@@ -213,8 +235,8 @@ async def delete_channel(
             detail="Only channel owner can delete channel"
         )
 
-    db.delete(channel)
-    db.commit()
+    await db.delete(channel)
+    await db.commit()
 
     return None
 
@@ -228,7 +250,7 @@ async def add_channel_member(
     channel_id: UUID,
     member_data: ChannelMemberCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Add a member to a channel
@@ -236,7 +258,8 @@ async def add_channel_member(
     - **user_id**: ID of user to add
     - **role**: Role to assign (member, admin) - default: member
     """
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    result = await db.execute(select(Channel).filter(Channel.id == channel_id))
+    channel = result.scalar_one_or_none()
 
     if not channel:
         raise HTTPException(
@@ -245,11 +268,14 @@ async def add_channel_member(
         )
 
     # Check if current user has permission to add members
-    current_membership = db.query(ChannelMember).filter(
-        ChannelMember.channel_id == channel_id,
-        ChannelMember.user_id == current_user.id,
-        ChannelMember.role.in_(['owner', 'admin'])
-    ).first()
+    result = await db.execute(
+        select(ChannelMember).filter(
+            ChannelMember.channel_id == channel_id,
+            ChannelMember.user_id == current_user.id,
+            ChannelMember.role.in_(['owner', 'admin'])
+        )
+    )
+    current_membership = result.scalar_one_or_none()
 
     if not current_membership:
         raise HTTPException(
@@ -258,7 +284,8 @@ async def add_channel_member(
         )
 
     # Check if user exists
-    user = db.query(User).filter(User.id == member_data.user_id).first()
+    result = await db.execute(select(User).filter(User.id == member_data.user_id))
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -266,10 +293,13 @@ async def add_channel_member(
         )
 
     # Check if already a member
-    existing_membership = db.query(ChannelMember).filter(
-        ChannelMember.channel_id == channel_id,
-        ChannelMember.user_id == member_data.user_id
-    ).first()
+    result = await db.execute(
+        select(ChannelMember).filter(
+            ChannelMember.channel_id == channel_id,
+            ChannelMember.user_id == member_data.user_id
+        )
+    )
+    existing_membership = result.scalar_one_or_none()
 
     if existing_membership:
         raise HTTPException(
@@ -285,8 +315,8 @@ async def add_channel_member(
     )
 
     db.add(new_membership)
-    db.commit()
-    db.refresh(new_membership)
+    await db.commit()
+    await db.refresh(new_membership)
 
     return new_membership
 
@@ -295,12 +325,13 @@ async def add_channel_member(
 async def list_channel_members(
     channel_id: UUID,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     List all members of a channel
     """
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    result = await db.execute(select(Channel).filter(Channel.id == channel_id))
+    channel = result.scalar_one_or_none()
 
     if not channel:
         raise HTTPException(
@@ -310,10 +341,13 @@ async def list_channel_members(
 
     # Check if user has access
     if channel.is_private:
-        membership = db.query(ChannelMember).filter(
-            ChannelMember.channel_id == channel_id,
-            ChannelMember.user_id == current_user.id
-        ).first()
+        result = await db.execute(
+            select(ChannelMember).filter(
+                ChannelMember.channel_id == channel_id,
+                ChannelMember.user_id == current_user.id
+            )
+        )
+        membership = result.scalar_one_or_none()
 
         if not membership:
             raise HTTPException(
@@ -321,9 +355,12 @@ async def list_channel_members(
                 detail="Access denied"
             )
 
-    members = db.query(ChannelMember).filter(
-        ChannelMember.channel_id == channel_id
-    ).all()
+    result = await db.execute(
+        select(ChannelMember).filter(
+            ChannelMember.channel_id == channel_id
+        )
+    )
+    members = result.scalars().all()
 
     return members
 
@@ -333,12 +370,13 @@ async def remove_channel_member(
     channel_id: UUID,
     user_id: UUID,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Remove a member from a channel
     """
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    result = await db.execute(select(Channel).filter(Channel.id == channel_id))
+    channel = result.scalar_one_or_none()
 
     if not channel:
         raise HTTPException(
@@ -347,11 +385,14 @@ async def remove_channel_member(
         )
 
     # Check if current user has permission
-    current_membership = db.query(ChannelMember).filter(
-        ChannelMember.channel_id == channel_id,
-        ChannelMember.user_id == current_user.id,
-        ChannelMember.role.in_(['owner', 'admin'])
-    ).first()
+    result = await db.execute(
+        select(ChannelMember).filter(
+            ChannelMember.channel_id == channel_id,
+            ChannelMember.user_id == current_user.id,
+            ChannelMember.role.in_(['owner', 'admin'])
+        )
+    )
+    current_membership = result.scalar_one_or_none()
 
     # Allow users to remove themselves
     if not current_membership and user_id != current_user.id:
@@ -361,10 +402,13 @@ async def remove_channel_member(
         )
 
     # Find membership to remove
-    membership = db.query(ChannelMember).filter(
-        ChannelMember.channel_id == channel_id,
-        ChannelMember.user_id == user_id
-    ).first()
+    result = await db.execute(
+        select(ChannelMember).filter(
+            ChannelMember.channel_id == channel_id,
+            ChannelMember.user_id == user_id
+        )
+    )
+    membership = result.scalar_one_or_none()
 
     if not membership:
         raise HTTPException(
@@ -379,7 +423,7 @@ async def remove_channel_member(
             detail="Cannot remove channel owner"
         )
 
-    db.delete(membership)
-    db.commit()
+    await db.delete(membership)
+    await db.commit()
 
     return None

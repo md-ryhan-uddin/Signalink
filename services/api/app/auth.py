@@ -8,7 +8,8 @@ from jose import JWTError, jwt
 import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 import uuid
 
 from .config import settings
@@ -128,12 +129,12 @@ def decode_access_token(token: str) -> TokenData:
     return token_data
 
 
-def authenticate_user(db: Session, username: str, password: str) -> Optional[User]:
+async def authenticate_user(db: AsyncSession, username: str, password: str) -> Optional[User]:
     """
     Authenticate a user with username and password
 
     Args:
-        db: Database session
+        db: Async database session
         username: Username or email
         password: Plain text password
 
@@ -141,9 +142,12 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
         User object if authentication successful, None otherwise
     """
     # Try to find user by username or email
-    user = db.query(User).filter(
-        (User.username == username) | (User.email == username)
-    ).first()
+    result = await db.execute(
+        select(User).filter(
+            (User.username == username) | (User.email == username)
+        )
+    )
+    user = result.scalar_one_or_none()
 
     if not user:
         return None
@@ -159,14 +163,14 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ) -> User:
     """
     Dependency to get the current authenticated user
 
     Args:
         token: JWT token from Authorization header
-        db: Database session
+        db: Async database session
 
     Returns:
         Current authenticated User
@@ -174,6 +178,8 @@ async def get_current_user(
     Raises:
         HTTPException: If authentication fails
     """
+    from sqlalchemy import select
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -183,8 +189,11 @@ async def get_current_user(
     # Decode token
     token_data = decode_access_token(token)
 
-    # Get user from database
-    user = db.query(User).filter(User.id == token_data.user_id).first()
+    # Get user from database (async)
+    result = await db.execute(
+        select(User).filter(User.id == token_data.user_id)
+    )
+    user = result.scalar_one_or_none()
 
     if user is None:
         raise credentials_exception
@@ -197,17 +206,20 @@ async def get_current_user(
 
     # Check if token is revoked (optional - for future implementation)
     if token_data.jti:
-        session = db.query(UserSession).filter(
-            UserSession.token_jti == token_data.jti,
-            UserSession.is_revoked == False
-        ).first()
+        result = await db.execute(
+            select(UserSession).filter(
+                UserSession.token_jti == token_data.jti,
+                UserSession.is_revoked == False
+            )
+        )
+        session = result.scalar_one_or_none()
 
         if not session:
             raise credentials_exception
 
     # Update last seen
     user.last_seen_at = datetime.utcnow()
-    db.commit()
+    await db.commit()
 
     return user
 
@@ -236,8 +248,8 @@ async def get_current_active_user(
     return current_user
 
 
-def create_user_session(
-    db: Session,
+async def create_user_session(
+    db: AsyncSession,
     user_id: uuid.UUID,
     token_jti: str,
     expires_at: datetime,
@@ -248,7 +260,7 @@ def create_user_session(
     Create a user session record for token tracking
 
     Args:
-        db: Database session
+        db: Async database session
         user_id: User's UUID
         token_jti: JWT ID
         expires_at: Token expiration time
@@ -267,28 +279,31 @@ def create_user_session(
     )
 
     db.add(session)
-    db.commit()
-    db.refresh(session)
+    await db.commit()
+    await db.refresh(session)
 
     return session
 
 
-def revoke_token(db: Session, token_jti: str) -> bool:
+async def revoke_token(db: AsyncSession, token_jti: str) -> bool:
     """
     Revoke a JWT token by its JTI
 
     Args:
-        db: Database session
+        db: Async database session
         token_jti: JWT ID to revoke
 
     Returns:
         True if token was revoked, False if not found
     """
-    session = db.query(UserSession).filter(UserSession.token_jti == token_jti).first()
+    result = await db.execute(
+        select(UserSession).filter(UserSession.token_jti == token_jti)
+    )
+    session = result.scalar_one_or_none()
 
     if session:
         session.is_revoked = True
-        db.commit()
+        await db.commit()
         return True
 
     return False

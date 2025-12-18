@@ -3,7 +3,8 @@ User management endpoints
 Registration, profile management, user search
 """
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import List
 from datetime import datetime, timedelta
 
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
+async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """
     Register a new user account
 
@@ -32,7 +33,8 @@ async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
     - **full_name**: Optional full name
     """
     # Check if username already exists
-    existing_user = db.query(User).filter(User.username == user_data.username).first()
+    result = await db.execute(select(User).filter(User.username == user_data.username))
+    existing_user = result.scalar_one_or_none()
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -40,7 +42,8 @@ async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
         )
 
     # Check if email already exists
-    existing_email = db.query(User).filter(User.email == user_data.email).first()
+    result = await db.execute(select(User).filter(User.email == user_data.email))
+    existing_email = result.scalar_one_or_none()
     if existing_email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -57,14 +60,14 @@ async def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
     )
 
     db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+    await db.commit()
+    await db.refresh(new_user)
 
     return new_user
 
 
 @router.post("/login", response_model=Token)
-async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
+async def login(user_credentials: UserLogin, db: AsyncSession = Depends(get_db)):
     """
     Authenticate user and return JWT token
 
@@ -72,7 +75,7 @@ async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
     - **password**: User password
     """
     # Authenticate user
-    user = authenticate_user(db, user_credentials.username, user_credentials.password)
+    user = await authenticate_user(db, user_credentials.username, user_credentials.password)
 
     if not user:
         raise HTTPException(
@@ -90,7 +93,7 @@ async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
     )
 
     # Create session record
-    create_user_session(
+    await create_user_session(
         db=db,
         user_id=user.id,
         token_jti=jti,
@@ -116,7 +119,7 @@ async def get_current_user_profile(current_user: User = Depends(get_current_user
 async def update_current_user_profile(
     user_update: UserUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Update current user's profile
@@ -130,8 +133,8 @@ async def update_current_user_profile(
     if user_update.avatar_url is not None:
         current_user.avatar_url = user_update.avatar_url
 
-    db.commit()
-    db.refresh(current_user)
+    await db.commit()
+    await db.refresh(current_user)
 
     return current_user
 
@@ -140,12 +143,13 @@ async def update_current_user_profile(
 async def get_user_by_username(
     username: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get user profile by username
     """
-    user = db.query(User).filter(User.username == username).first()
+    result = await db.execute(select(User).filter(User.username == username))
+    user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(
@@ -162,7 +166,7 @@ async def search_users(
     skip: int = 0,
     limit: int = 20,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Search users by username or email
@@ -171,15 +175,17 @@ async def search_users(
     - **skip**: Number of records to skip (pagination)
     - **limit**: Maximum number of records to return
     """
-    users_query = db.query(User)
+    stmt = select(User)
 
     if query:
         search_pattern = f"%{query}%"
-        users_query = users_query.filter(
+        stmt = stmt.filter(
             (User.username.ilike(search_pattern)) |
             (User.email.ilike(search_pattern))
         )
 
-    users = users_query.offset(skip).limit(limit).all()
+    stmt = stmt.offset(skip).limit(limit)
+    result = await db.execute(stmt)
+    users = result.scalars().all()
 
     return users

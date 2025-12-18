@@ -3,8 +3,8 @@ Message management endpoints
 Send, retrieve, update, and delete messages
 """
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import desc, select
 from typing import List
 from uuid import UUID
 import logging
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/messages", tags=["messages"])
 async def send_message(
     message_data: MessageCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Send a message to a channel
@@ -34,7 +34,10 @@ async def send_message(
     - **metadata**: Optional metadata (JSON)
     """
     # Check if channel exists
-    channel = db.query(Channel).filter(Channel.id == message_data.channel_id).first()
+    result = await db.execute(
+        select(Channel).filter(Channel.id == message_data.channel_id)
+    )
+    channel = result.scalar_one_or_none()
 
     if not channel:
         raise HTTPException(
@@ -43,10 +46,13 @@ async def send_message(
         )
 
     # Check if user is a member of the channel
-    membership = db.query(ChannelMember).filter(
-        ChannelMember.channel_id == message_data.channel_id,
-        ChannelMember.user_id == current_user.id
-    ).first()
+    result = await db.execute(
+        select(ChannelMember).filter(
+            ChannelMember.channel_id == message_data.channel_id,
+            ChannelMember.user_id == current_user.id
+        )
+    )
+    membership = result.scalar_one_or_none()
 
     if not membership:
         raise HTTPException(
@@ -64,8 +70,8 @@ async def send_message(
     )
 
     db.add(new_message)
-    db.commit()
-    db.refresh(new_message)
+    await db.commit()
+    await db.refresh(new_message)
 
     # Publish message.created event to Kafka
     try:
@@ -96,7 +102,7 @@ async def get_channel_messages(
     skip: int = 0,
     limit: int = 50,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get messages from a channel (paginated)
@@ -110,7 +116,10 @@ async def get_channel_messages(
         limit = 100
 
     # Check if channel exists
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    result = await db.execute(
+        select(Channel).filter(Channel.id == channel_id)
+    )
+    channel = result.scalar_one_or_none()
 
     if not channel:
         raise HTTPException(
@@ -120,10 +129,13 @@ async def get_channel_messages(
 
     # Check if user has access to channel
     if channel.is_private:
-        membership = db.query(ChannelMember).filter(
-            ChannelMember.channel_id == channel_id,
-            ChannelMember.user_id == current_user.id
-        ).first()
+        result = await db.execute(
+            select(ChannelMember).filter(
+                ChannelMember.channel_id == channel_id,
+                ChannelMember.user_id == current_user.id
+            )
+        )
+        membership = result.scalar_one_or_none()
 
         if not membership:
             raise HTTPException(
@@ -132,10 +144,13 @@ async def get_channel_messages(
             )
     else:
         # For public channels, check if user is a member
-        membership = db.query(ChannelMember).filter(
-            ChannelMember.channel_id == channel_id,
-            ChannelMember.user_id == current_user.id
-        ).first()
+        result = await db.execute(
+            select(ChannelMember).filter(
+                ChannelMember.channel_id == channel_id,
+                ChannelMember.user_id == current_user.id
+            )
+        )
+        membership = result.scalar_one_or_none()
 
         if not membership:
             raise HTTPException(
@@ -144,13 +159,16 @@ async def get_channel_messages(
             )
 
     # Get messages (excluding soft-deleted)
-    messages = db.query(Message).filter(
-        Message.channel_id == channel_id,
-        Message.is_deleted == False
-    ).order_by(desc(Message.created_at)).offset(skip).limit(limit).all()
+    result = await db.execute(
+        select(Message).filter(
+            Message.channel_id == channel_id,
+            Message.is_deleted == False
+        ).order_by(desc(Message.created_at)).offset(skip).limit(limit)
+    )
+    messages = result.scalars().all()
 
     # Reverse to get chronological order
-    messages.reverse()
+    messages = list(reversed(messages))
 
     return messages
 
@@ -159,15 +177,18 @@ async def get_channel_messages(
 async def get_message(
     message_id: UUID,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get a specific message by ID
     """
-    message = db.query(Message).filter(
-        Message.id == message_id,
-        Message.is_deleted == False
-    ).first()
+    result = await db.execute(
+        select(Message).filter(
+            Message.id == message_id,
+            Message.is_deleted == False
+        )
+    )
+    message = result.scalar_one_or_none()
 
     if not message:
         raise HTTPException(
@@ -176,13 +197,19 @@ async def get_message(
         )
 
     # Check if user has access to the channel
-    channel = db.query(Channel).filter(Channel.id == message.channel_id).first()
+    result = await db.execute(
+        select(Channel).filter(Channel.id == message.channel_id)
+    )
+    channel = result.scalar_one_or_none()
 
     if channel.is_private:
-        membership = db.query(ChannelMember).filter(
-            ChannelMember.channel_id == message.channel_id,
-            ChannelMember.user_id == current_user.id
-        ).first()
+        result = await db.execute(
+            select(ChannelMember).filter(
+                ChannelMember.channel_id == message.channel_id,
+                ChannelMember.user_id == current_user.id
+            )
+        )
+        membership = result.scalar_one_or_none()
 
         if not membership:
             raise HTTPException(
@@ -198,17 +225,20 @@ async def update_message(
     message_id: UUID,
     message_update: MessageUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Update a message (author only)
 
     - **content**: New message content
     """
-    message = db.query(Message).filter(
-        Message.id == message_id,
-        Message.is_deleted == False
-    ).first()
+    result = await db.execute(
+        select(Message).filter(
+            Message.id == message_id,
+            Message.is_deleted == False
+        )
+    )
+    message = result.scalar_one_or_none()
 
     if not message:
         raise HTTPException(
@@ -227,8 +257,8 @@ async def update_message(
     message.content = message_update.content
     message.is_edited = True
 
-    db.commit()
-    db.refresh(message)
+    await db.commit()
+    await db.refresh(message)
 
     # Publish message.edited event to Kafka
     try:
@@ -258,15 +288,18 @@ async def update_message(
 async def delete_message(
     message_id: UUID,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a message (soft delete - author or channel admin/owner)
     """
-    message = db.query(Message).filter(
-        Message.id == message_id,
-        Message.is_deleted == False
-    ).first()
+    result = await db.execute(
+        select(Message).filter(
+            Message.id == message_id,
+            Message.is_deleted == False
+        )
+    )
+    message = result.scalar_one_or_none()
 
     if not message:
         raise HTTPException(
@@ -277,11 +310,14 @@ async def delete_message(
     # Check if user is the message author or channel admin/owner
     is_author = message.user_id == current_user.id
 
-    membership = db.query(ChannelMember).filter(
-        ChannelMember.channel_id == message.channel_id,
-        ChannelMember.user_id == current_user.id,
-        ChannelMember.role.in_(['owner', 'admin'])
-    ).first()
+    result = await db.execute(
+        select(ChannelMember).filter(
+            ChannelMember.channel_id == message.channel_id,
+            ChannelMember.user_id == current_user.id,
+            ChannelMember.role.in_(['owner', 'admin'])
+        )
+    )
+    membership = result.scalar_one_or_none()
 
     is_admin = membership is not None
 
@@ -294,7 +330,7 @@ async def delete_message(
     # Soft delete
     message.is_deleted = True
 
-    db.commit()
+    await db.commit()
 
     # Publish message.deleted event to Kafka
     try:
