@@ -27,6 +27,11 @@ async def lifespan(app: FastAPI):
     """
     Manage application lifecycle - startup and shutdown events
     """
+    import asyncio
+
+    # Track background tasks
+    consumer_task = None
+
     # Startup
     logger.info("Starting Signalink API...")
 
@@ -46,7 +51,6 @@ async def lifespan(app: FastAPI):
         logger.info("Kafka consumer initialized successfully")
 
         # Start consuming messages in background
-        import asyncio
         consumer_task = asyncio.create_task(kafka_consumer.start_consuming())
         logger.info("Kafka consumer tasks started")
     except Exception as e:
@@ -56,6 +60,17 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down Signalink API...")
+
+    # Cancel consumer task if running
+    if consumer_task and not consumer_task.done():
+        logger.info("Cancelling Kafka consumer task...")
+        consumer_task.cancel()
+        try:
+            await consumer_task
+        except asyncio.CancelledError:
+            logger.info("Kafka consumer task cancelled successfully")
+        except Exception as e:
+            logger.error(f"Error cancelling consumer task: {e}")
 
     # Gracefully stop Kafka consumer
     try:
